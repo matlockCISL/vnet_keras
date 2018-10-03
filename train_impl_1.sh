@@ -11,5 +11,5 @@ source ~/virtualenv/keras/bin/activate
 export OMP_NUM_THREADS=136
 export KMP_AFFINITY=granularity=fine,compact,1,0;
 
-cd ~/promise2012
-stdbuf -o 0 python train_vnet_keras.py 2>&1 | tee ~/promise2012/results/train_vnet.log
+cd ~/vnet_keras
+stdbuf -o 0 python train_impl_1.py 2>&1 | tee ~/vnet_keras/results/train_impl_1.log
