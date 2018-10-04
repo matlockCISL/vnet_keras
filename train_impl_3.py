@@ -48,48 +48,29 @@ def _handle_data_format():
         DIM2_AXIS = 3
         DIM3_AXIS = 4
 
-from keras import backend as K
-from keras.engine import Layer
-
-class Softmax(Layer):
-    def __init__(self, axis=-1,**kwargs):
-        self.axis=axis
-        super(Softmax, self).__init__(**kwargs)
-
-    def build(self,input_shape):
-        pass
-
-    def call(self, x,mask=None):
-        e = K.exp(x - K.max(x, axis=self.axis, keepdims=True))
-        s = K.sum(e, axis=self.axis, keepdims=True)
-        return e / s
-
-    def get_output_shape_for(self, input_shape):
-        return input_shape
-
 def downward_layer(input_layer, n_convolutions, n_output_channels):
     inl = input_layer
     for _ in range(n_convolutions-1):
-        inl = PReLU()(
+        inl = PReLU(shared_axes=[1, 2, 3])(
             Conv3D(n_output_channels // 2, (5, 5, 5), padding='same', data_format='channels_last')(inl)
         )
     conv = Conv3D(n_output_channels // 2, (5, 5, 5), padding='same', data_format='channels_last')(inl)
     added = add([conv, input_layer])
     downsample = Conv3D(n_output_channels, (2, 2, 2), strides=(2, 2, 2), data_format='channels_last')(added)
-    prelu = PReLU()(downsample)
+    prelu = PReLU(shared_axes=[1, 2, 3])(downsample)
     return prelu, added
 
 def upward_layer(input0 ,input1, n_convolutions, n_output_channels):
     merged = concatenate([input0, input1], axis=4)
     inl = merged
     for _ in range(n_convolutions-1):
-        inl = PReLU()(
+        inl = PReLU(shared_axes=[1, 2, 3])(
             Conv3D(n_output_channels * 4, (5, 5, 5), padding='same', data_format='channels_last')(inl)
         )
     conv = Conv3D(n_output_channels * 4, (5, 5, 5), padding='same', data_format='channels_last')(inl)
     added = add([conv, merged])
     upsample = Conv3DTranspose(n_output_channels, (2, 2, 2), strides=(2 ,2, 2), padding='SAME', use_bias=True, kernel_initializer='glorot_uniform', bias_initializer='zeros', data_format='channels_last')(added)
-    return PReLU()(upsample)
+    return PReLU(shared_axes=[1, 2, 3])(upsample)
 
 def VNet(input_shape):
 
@@ -98,10 +79,10 @@ def VNet(input_shape):
     conv_1 = Conv3D(16, (5, 5, 5), padding='same', data_format='channels_last')(input_layer)
     repeat_1 = concatenate([input_layer] * 16)
     add_1 = add([conv_1, repeat_1])
-    prelu_1_1 = PReLU()(add_1)
+    prelu_1_1 = PReLU(shared_axes=[1, 2, 3])(add_1)
     # downsample_1 = downward_layer(prelu_1_1, 2, 32)
     downsample_1 = Conv3D(32, (2, 2, 2), strides=(2, 2, 2), data_format='channels_last')(prelu_1_1)
-    prelu_1_2 = PReLU()(downsample_1)
+    prelu_1_2 = PReLU(shared_axes=[1, 2, 3])(downsample_1)
 
     # Layer 2,3,4
     out2, left2 = downward_layer(prelu_1_2, 2, 64)
@@ -110,14 +91,14 @@ def VNet(input_shape):
 
     # Layer 5
     conv_5_1 = Conv3D(256, (5, 5, 4), padding='same', data_format='channels_last')(out4)
-    prelu_5_1 = PReLU()(conv_5_1)
+    prelu_5_1 = PReLU(shared_axes=[1, 2, 3])(conv_5_1)
     conv_5_2 = Conv3D(256, (5, 5, 4), padding='same', data_format='channels_last')(prelu_5_1)
-    prelu_5_2 = PReLU()(conv_5_2)
+    prelu_5_2 = PReLU(shared_axes=[1, 2, 3])(conv_5_2)
     conv_5_3 = Conv3D(256, (5, 5, 4), padding='same', data_format='channels_last')(prelu_5_2)
     add_5 = add([conv_5_3, out4])
-    prelu_5_1 = PReLU()(add_5)
+    prelu_5_1 = PReLU(shared_axes=[1, 2, 3])(add_5)
     downsample_5 = Conv3DTranspose(128, (2, 2, 2), strides=(2, 2, 2), padding='SAME', use_bias=True, kernel_initializer='glorot_uniform', bias_initializer='zeros', data_format='channels_last')(prelu_5_1)
-    prelu_5_2 = PReLU()(downsample_5)
+    prelu_5_2 = PReLU(shared_axes=[1, 2, 3])(downsample_5)
 
     #Layer 6,7,8
     out6 = upward_layer(prelu_5_2, left4, 3, 64)
@@ -137,7 +118,7 @@ def VNet(input_shape):
 def transfer_model(base_model, new_model):
     # new_model = VNet(input_shape)
     for new_layer, layer in zip(new_model.layers[1:], base_model.layers[1:]):
-        print('transferring {}'.format(layer.name))
+        # print('transferring {}'.format(layer.name))
         new_layer.set_weights(layer.get_weights())
     return new_model
 
@@ -177,33 +158,37 @@ model.compile(optimizer=Adam(lr=1e-5), loss=dice_coef_loss, metrics=[dice_coef])
 # y_pred = model.predict(X[:1,:,:,:,:])
 # print(time.time() - t)
 
-model_checkpoint = ModelCheckpoint('vnet.hdf5', monitor='loss', save_best_only=True)
+model_checkpoint = ModelCheckpoint('vnet_impl_3.hdf5', monitor='loss', save_best_only=True)
+callbacks_list = [model_checkpoint]
 
-n_epochs = 10
+n_epochs = 100
 input_x = 128
 input_y = 128
 input_z = 64
-subsample_factor = 20
+subsample_factor = 2
+n_samples = 2
 transferred_model = VNet((input_x, input_y, input_z, 1))
 transferred_model.compile(optimizer=Adam(lr=1e-5), loss=dice_coef_loss, metrics=[dice_coef])
 for epoch in range(n_epochs):
     sampled_X_list = []
     sampled_y_list = []
-    for i in range(X.shape[0]):
+    for _ in range(n_samples):
+        i = random.randint(0, X.shape[0])
         for j in range((input_x // input_x_sub) * (input_y // input_y_sub) * (input_z // input_z_sub) // subsample_factor):
             idx_x = random.randint(0, input_x-input_x_sub)
             idx_y = random.randint(0, input_y-input_y_sub)
             idx_z = random.randint(0, input_z-input_z_sub)
             sampled_X_list.append(X[i:(i+1), idx_x:(idx_x+input_x_sub), idx_y:(idx_y+input_y_sub), idx_z:(idx_z+input_z_sub), :])
             sampled_y_list.append(y[i:(i+1), idx_x:(idx_x+input_x_sub), idx_y:(idx_y+input_y_sub), idx_z:(idx_z+input_z_sub), :])
-    print(sampled_X_list[0].shape)
+    # print(sampled_X_list[0].shape)
     sampled_X = numpy.concatenate(sampled_X_list, axis=0)
     sampled_y = numpy.concatenate(sampled_y_list, axis=0)
-    print(sampled_X.shape)
-    print(sampled_y.shape)
+    # print(sampled_X.shape)
+    # print(sampled_y.shape)
     del sampled_X_list, sampled_y_list
-    model.fit(sampled_X, sampled_y, batch_size=40, epochs=1, verbose=1)
-    transferred_model = transfer_model(model, transferred_model)
-    score = transferred_model.evaluate(X, y, batch_size=10)
-    print('Epoch [{}]: score = {}'.format(epoch, score))
+    model.fit(sampled_X, sampled_y, batch_size=sampled_X.shape[0], epochs=1, verbose=0, callbacks=callbacks_list)
+    if epoch % 2 == 0:
+        transferred_model = transfer_model(model, transferred_model)
+        score = transferred_model.evaluate(X, y, batch_size=10)
+        print('Epoch [{}]: loss = {}, dice_coef = {}'.format(epoch, score[0], score[1]))
 
