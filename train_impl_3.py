@@ -161,7 +161,7 @@ model.compile(optimizer=Adam(lr=1e-5), loss=dice_coef_loss, metrics=[dice_coef])
 model_checkpoint = ModelCheckpoint('vnet_impl_3.hdf5', monitor='loss', save_best_only=True)
 callbacks_list = [model_checkpoint]
 
-n_epochs = 100
+n_epochs = 500
 input_x = 128
 input_y = 128
 input_z = 64
@@ -187,8 +187,15 @@ for epoch in range(n_epochs):
     # print(sampled_y.shape)
     del sampled_X_list, sampled_y_list
     model.fit(sampled_X, sampled_y, batch_size=sampled_X.shape[0], epochs=1, verbose=0, callbacks=callbacks_list)
-    if epoch % 2 == 0:
+    if epoch % 10 == 0:
         transferred_model = transfer_model(model, transferred_model)
         score = transferred_model.evaluate(X, y, batch_size=10)
         print('Epoch [{}]: loss = {}, dice_coef = {}'.format(epoch, score[0], score[1]))
+    else:
+        print('Epoch [{}]'.format(epoch))
+
+
+transferred_model.save('vnet_impl_3.h5')
+
+# predict testing data
 
